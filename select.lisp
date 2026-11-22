@@ -44,6 +44,34 @@ entries of an existing directory; when the directory does not exist the list
 is empty and Return already submits the input."
   (directory-name-p (prompt-input-string)))
 
+;;; Tab inserts the candidate; Down and Up move the selection.
+;;;
+;;; Emacs vertico binds TAB to vertico-insert and leaves moving to Down/Up, so
+;;; this replaces Lem's own TAB (COMPLETION-NARROWING-DOWN-OR-NEXT-LINE, which
+;;; inserts the common prefix of all candidates and otherwise moves down).  In
+;;; a file prompt a directory candidate's label ends in a slash, so inserting
+;;; it and refreshing the list descends into that directory: one TAB lists the
+;;; subdirectory.  Any other candidate (a file, an M-x command, a buffer) is
+;;; simply inserted into the prompt, which is the whole name only if the label
+;;; is the whole name -- file items carry the range of the last path component
+;;; (src/ext/prompt-window.lisp:435), command items the token at point.
+;;;
+;;; COMPLETION-INSERT leaves the completion in place, so the refresh below is
+;;; what recomputes the list for the new input.  Outside a prompt the key does
+;;; what Lem bound it to: a completion list in a buffer is not a prompt and has
+;;; nothing to descend into.
+
+(define-command completion-insert-candidate () ()
+  "Insert the focused candidate into the prompt and list what it leads to."
+  (let* ((context lem/completion-mode::*completion-context*)
+         (popup (and context (lem/completion-mode::context-popup-menu context)))
+         (item (and popup (lem/popup-menu:get-focus-item popup))))
+    (cond ((and item (prompt-window-active-p))
+           (lem/completion-mode::completion-insert (lem:current-point) item)
+           (lem/completion-mode:completion-refresh))
+          (t
+           (lem/completion-mode::completion-narrowing-down-or-next-line)))))
+
 (defun prompt-history-name (prompt)
   "The name of PROMPT's history, e.g. \"PROMPT-FOR-FILE\", or NIL.
 Looked up by identity in the prompt window's history table, so the answer does

@@ -7,6 +7,7 @@
            #:*history-ordering-p*
            #:*persisted-history-names*
            #:*persisted-history-limit*
+           #:completion-insert-candidate
            #:completion-select-and-execute
            #:completion-submit-input
            #:history-order-items

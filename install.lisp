@@ -65,6 +65,11 @@ another copy on top of it.")
   (define-key lem/completion-mode::*completion-mode-keymap*
     "Return" 'completion-select-and-execute)
 
+  ;; vertico-insert: TAB inserts the focused candidate, descending into a
+  ;; directory in a file prompt; Down/Up move the selection.
+  (define-key lem/completion-mode::*completion-mode-keymap*
+    "Tab" 'completion-insert-candidate)
+
   ;; vertico-exit-input: submit the typed input even when a candidate is focused.
   (define-key lem/completion-mode::*completion-mode-keymap*
     "M-Return" 'completion-submit-input)

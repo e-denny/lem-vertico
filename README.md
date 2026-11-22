@@ -14,7 +14,7 @@ Loading the system applies it. `lem-vertico:install` runs at load and
 - makes the candidate list borderless and puts it inside that box, on the rows
   below the prompt line, at the prompt's width,
 - opens the candidate list automatically and lists it in order, best match
-  first -- Down moves to the next candidate, as in Emacs,
+  first -- Down moves to the next candidate and Tab inserts it, as in Emacs,
 - redefines `lem/prompt-window::compute-window-rectangle` to apply the width
   cap and the extra rows,
 - shows `POSITION/TOTAL` at the start of the prompt line (`*show-count*`),
@@ -50,7 +50,8 @@ Loading the system applies it; there is nothing else to call.
 
 | key | command | effect |
 |---|---|---|
-| `Down` / `Tab` | `completion-next-line` | select the next candidate |
+| `Tab` | `completion-insert-candidate` | insert the focused candidate, descending into a directory in a file prompt |
+| `Down` | `completion-next-line` | select the next candidate |
 | `Up` / `S-Tab` | `completion-previous-line` | select the previous candidate |
 | `Return` | `completion-select-and-execute` | insert the focused candidate and submit the prompt |
 | `Return` on a `dir/` candidate | | inserts the directory, keeps the prompt open |
