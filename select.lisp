@@ -106,15 +106,16 @@ is a prefix of an existing candidate, or to search for the empty string."
 ;;; it for good -- deleting that character ran DELETE-PREVIOUS-CHAR as the plain
 ;;; prompt command, which never refreshes.
 ;;;
-;;; The replacement keeps the context and the mode, and hides the popup instead
-;;; of shrinking it to nothing: a one-row box spills its 10px CSS padding onto
-;;; the row below (the frontend pads the wrapper by borderOffsetY), which is the
-;;; prompt's own row, so an empty popup would cover the "Command:" line.  The
+;;; The completion context, the mode and the popup are kept as Lem leaves them;
+;;; only the window is hidden, because a one-row box spills its 10px CSS padding
+;;; onto the row below (the frontend pads the wrapper by borderOffsetY), which is
+;;; the prompt's own row, so an empty popup would cover the "Command:" line.  The
 ;;; next keystroke refreshes through COMPLETION-REFRESH and the popup reappears
-;;; where it was; its style -- the :horizontally-above-window gravity set above
-;;; -- is remembered for the reopen so the position does not change.  Return in
-;;; that state submits the typed input, as COMPLETION-SELECT-AND-EXECUTE does
-;;; when no candidate is focused: what vertico does with an empty list.
+;;; where it was; the style -- the borderless list-inside-the-prompt style from
+;;; popup.lisp -- is remembered for the reopen, so the box does not change shape.
+;;; Return in that state submits the typed input, as COMPLETION-SELECT-AND-EXECUTE
+;;; does when no candidate is focused: what vertico does with an empty list.  The
+;;; count field stays, reading "0/0".
 
 (defvar *original-continue-completion* nil
   "The unpatched CONTINUE-COMPLETION, captured the first time this file is
@@ -128,7 +129,8 @@ with this one so it keeps the gravity it was created with.")
 
 (defun hide-completion-popup (context)
   "Delete CONTEXT's popup window, remembering its style, keep the context.
-The completion stays alive with no candidates on screen."
+The completion stays alive with no candidates on screen; the prompt goes back to
+its one line and the count reads \"0/0\"."
   (let ((popup (lem/completion-mode::context-popup-menu context)))
     (when popup
       ;; POPUP-WINDOW-STYLE is specialized on the window, not on the menu.
@@ -136,7 +138,9 @@ The completion stays alive with no candidates on screen."
             (lem/popup-window::popup-window-style
              (lem/popup-menu::popup-menu-window popup)))
       (lem:popup-menu-quit popup)
-      (setf (lem/completion-mode::context-popup-menu context) nil))))
+      (setf (lem/completion-mode::context-popup-menu context) nil)))
+  (refresh-prompt-count)
+  (ignore-errors (lem-core::update-floating-prompt-window (lem:current-frame))))
 
 (defun refresh-completion-popup (context items)
   "Show ITEMS in CONTEXT's popup, reopening it with its style when hidden."
@@ -153,5 +157,5 @@ The completion stays alive with no candidates on screen."
                         (lem:current-point) item)
                        (lem/completion-mode:completion-end))
                      :print-spec (lem/completion-mode::make-print-spec items)
-                     (when *completion-popup-style*
-                       (list :style *completion-popup-style*)))))))
+                     (list :style (or *completion-popup-style*
+                                      (prompt-completion-style))))))))

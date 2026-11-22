@@ -7,7 +7,7 @@
   :components ((:file "package")
                (:file "count")
                (:file "popup")
-               (:file "align")
+               (:file "prompt")
                (:file "history")
                (:file "select")
                (:file "install")))

@@ -1,103 +1,152 @@
 (in-package :lem-vertico)
 
-;;; The candidate count ("3/25"), in the completion popup's modeline.
+;;; The candidate count ("3/25"), at the start of the prompt line.
 ;;;
-;;; Emacs vertico writes the count onto the minibuffer line, left of the prompt,
-;;; through an overlay's :before-string.  None of that has an equivalent here:
-;;; Lem has no overlays and no :align-to text property, and a prompt buffer's
-;;; text *is* the input, so text inserted before the input start point would be
-;;; editable, would be visited by C-a, and would shift the prompt string.
+;;; Emacs vertico draws the count left of the prompt, on the minibuffer line, as
+;;; an overlay's :before-string.  Lem has neither :before-string nor :align-to,
+;;; and the prompt window's text *is* the prompt line ("Command: " is buffer
+;;; text marked read-only and :field), so the only place a count can be drawn
+;;; left of the prompt is in the prompt buffer, before the prompt string.
 ;;;
-;;; A header line inside the popup buffer is the next idea, and it does not work
-;;; here: ALIGN-POPUP-SELECTION pins the focused row to the popup's bottom row,
-;;; so as soon as the candidate list is taller than the window the view scrolls
-;;; and a header line sits outside the visible area -- exactly when a count is
-;;; worth reading.
+;;; That text cannot simply be inserted when the count changes.  Completion
+;;; captures the input start -- and, for every candidate, the range that
+;;; selecting it replaces -- as *temporary* points (src/buffer/internal/
+;;; point.lisp): temporary points are not shifted by later edits, and the
+;;; completion's start point is reused by every refresh of the candidate list.
+;;; Inserting or deleting a variable-length prefix mid-completion would leave
+;;; those points pointing into the wrong place, and Return would delete the
+;;; wrong region instead of the word being completed.
 ;;;
-;;; That leaves the popup window's modeline, which is always drawn and always
-;;; visible, and is the mechanism Lem's own typeout window uses for its status
-;;; line (a per-window WINDOW-MODELINE-FORMAT).  It costs one row, drawn below
-;;; the candidates, i.e. between the list and the prompt line; the count is
-;;; right aligned there.
+;;; So the field is inserted once, before the completion captures anything
+;;; (OPEN-PROMPT-COMPLETION is replaced for that, see prompt.lisp), and every
+;;; update rewrites it at the *same* width: the count is padded to
+;;; +COUNT-FIELD-WIDTH+ columns, wide enough for "100/100", the longest count
+;;; Lem's 100-item completion limit can produce.  The padding also keeps the
+;;; prompt from sliding sideways as the numbers change.
 
 (defvar *show-count* t
-  "When non-NIL, the completion popup shows \"POSITION/TOTAL\" in its modeline.
-Takes effect the next time a completion popup is opened.")
+  "When non-NIL, the candidate count is shown at the start of the prompt line.
+Takes effect the next time a completion starts.")
 
-(defun completion-popup-p (popup-menu)
-  "True when POPUP-MENU is the popup of the running completion."
-  (let ((context lem/completion-mode::*completion-context*))
-    (and context
-         (eq popup-menu (lem/completion-mode::context-popup-menu context)))))
+(defconstant +count-field-width+ 8
+  "Width of the count field in characters, including its trailing space.
+Three digits of position and three of total (\"100/100\") plus a space is the
+widest count the 100-item completion limit allows; padding to a fixed width is
+what makes the field safe to rewrite in place.")
 
-(defvar *completion-popup-p* nil
-  "True while a completion popup is being constructed.
-The frontend decides when the view is created -- from USE-MODELINE-P -- whether
-a window gets a modeline row at all, and Lem creates the view inside
-MAKE-INSTANCE, before DISPLAY-POPUP-MENU returns.  So the popup has to be
-tagged while it is built, not afterwards; setting the slot later leaves a view
-without a modeline surface and nothing is drawn.")
+(defvar *count-field-enabled* #+sbcl t #-sbcl nil
+  "True when the count field may be kept in the prompt buffer.
+The field is only safe to keep when OPEN-PROMPT-COMPLETION is replaced, which
+needs an unlocked LEM/PROMPT-WINDOW; without it the completion would hold stale
+points into the prompt and selecting a candidate would delete the wrong text.")
 
-(defmethod initialize-instance :around ((window lem/popup-window::popup-window)
-                                        &rest initargs &key &allow-other-keys)
-  "Give completion popups a modeline (i.e. the count) from the start."
-  (let ((modeline-p (and *completion-popup-p* *show-count*)))
-    (prog1 (apply #'call-next-method window
-                  (if modeline-p
-                      (list* :use-modeline-p t initargs)
-                      initargs))
-      (when modeline-p
-        (setf (lem-core::window-modeline-format window)
-              '(completion-count-modeline))))))
+(define-attribute vertico-count-attribute
+  (t :foreground :base04))
 
 (defun popup-menu-count (popup-menu)
-  "Return POPUP-MENU's candidate number (1-based) and its number of rows.
-The number is the candidate's position in the list the producer returned, not
-its screen row: with *COMPLETION-REVERSE* the display is upside down, so the
-best match is the bottom row and has to read 1/N, as it does in Emacs.  The
-number is NIL when there is no focus or it is not on a candidate."
+  "Return POPUP-MENU's focused candidate number (1-based) and its number of rows.
+The number is the candidate's position in the list the producer returned, which
+is also its row on screen now that the list is listed in order (top = best
+match) instead of reversed.  The number is NIL when there is no focus."
   (when popup-menu
     (let* ((buffer (lem/popup-menu::popup-menu-buffer popup-menu))
            (first-row (lem/popup-menu::buffer-start-line buffer))
            (rows (1+ (- (lem:buffer-nlines buffer) first-row)))
            (focus (lem/popup-menu::focus-point popup-menu))
            (row (and focus (lem:line-number-at-point focus))))
-      (when (and row (<= first-row row))
-        (setf row (1+ (- row first-row))))
-      (values (cond ((null row) nil)
-                    ((and lem/completion-mode::*completion-reverse*
-                          (completion-popup-p popup-menu))
-                     (1+ (- rows row)))
-                    (t row))
+      (values (when (and row (<= first-row row))
+                (1+ (- row first-row)))
               rows))))
 
-(defun completion-count-modeline (window)
-  "Modeline element: the focused candidate's position and the total, right aligned."
+(defun completion-count-string (popup-menu)
+  "The \"POSITION/TOTAL\" text describing POPUP-MENU, or NIL."
   (multiple-value-bind (row rows)
-      (popup-menu-count (lem:window-parameter window :popup-menu))
-    (values (if (and rows (plusp rows))
-                (format nil "~a/~d" (or row "-") rows)
-                "")
-            nil
-            :right)))
+      (popup-menu-count popup-menu)
+    (when (and rows (plusp rows))
+      (format nil "~A/~D" (or row "-") rows))))
 
-(defun popup-modeline-rows (popup-menu)
-  "The number of modeline rows POPUP-MENU's window has, 0 or 1."
-  (let ((window (and popup-menu (lem/popup-menu::popup-menu-window popup-menu))))
-    (if (and window (lem:window-use-modeline-p window)) 1 0)))
+(defun pad-count (text)
+  "TEXT padded to +COUNT-FIELD-WIDTH+ columns.
+The field width is constant so that rewriting it never moves the prompt string,
+which is what keeps the completion's temporary points valid (see above)."
+  (cond ((zerop (length text))
+         (make-string +count-field-width+ :initial-element #\space))
+        ((< (length text) (1- +count-field-width+))
+         (concatenate 'string
+                      text
+                      (make-string (- +count-field-width+ 1 (length text))
+                                   :initial-element #\space)
+                      " "))
+        (t
+         (concatenate 'string text " "))))
 
-(defun enable-count-modeline (popup-menu)
-  "Give POPUP-MENU's window a modeline that shows the candidate count.
-The window remembers its menu so the count can be recomputed on redraw; the
-modeline is redrawn on every redraw-display, i.e. after every command, so
-navigation updates it without any extra invalidation."
-  (when (and *show-count* popup-menu)
-    (let ((window (lem/popup-menu::popup-menu-window popup-menu)))
-      (when window
-        (setf (lem:window-parameter window :popup-menu) popup-menu)
-        ;; USE-MODELINE-P has a reader only, and popups are constructed with
-        ;; NIL (src/ext/popup-window.lisp, MAKE-POPUP-WINDOW).
-        (setf (slot-value window 'lem-core::use-modeline-p) t)
-        (setf (lem-core::window-modeline-format window)
-              '(completion-count-modeline))
+(defun prompt-count-text (prompt)
+  "The count field currently shown at the start of PROMPT's line, or NIL."
+  (lem:window-parameter prompt :vertico-count))
+
+(defun set-prompt-count (prompt text)
+  "Show TEXT at the start of PROMPT's line, left of the prompt string.
+TEXT is NIL to remove the field.  The field is read-only, like the prompt
+string, and the input starts after both of them
+\(PROMPT-WINDOW-START-CHARPOS)."
+  (let ((current (prompt-count-text prompt)))
+    (unless (equal current text)
+      (let ((buffer (lem:window-buffer prompt))
+            ;; The field we are replacing is read-only text of our own, and it is
+            ;; not part of the prompt's undo history: an undo that took it away
+            ;; would leave the field bookkeeping (and the input start) wrong.
+            (lem:*inhibit-read-only* t)
+            (lem:*inhibit-modification-hooks* t))
+        (lem/buffer/internal:with-inhibit-undo ()
+          (when current
+            (with-point ((start (lem:buffer-start-point buffer))
+                         (end (lem:buffer-start-point buffer)))
+              (lem:character-offset end (length current))
+              (lem:delete-between-points start end)))
+          (when text
+            (with-point ((start (lem:buffer-start-point buffer)))
+              (lem:insert-string start text
+                                 :attribute 'vertico-count-attribute
+                                 :read-only t))))
+        (setf (lem/prompt-window::prompt-window-start-charpos prompt)
+              (+ (length (lem/prompt-window::prompt-buffer-prompt-string buffer))
+                 (length (or text "")))
+              (lem:window-parameter prompt :vertico-count) text)
         t))))
+
+(defun refresh-prompt-count
+    (&optional (prompt (lem/prompt-window:current-prompt-window)) popup-menu)
+  "Rewrite PROMPT's count field for the running completion.
+POPUP-MENU defaults to the completion's own list.  With no list on screen the
+count still says how many candidates there are -- \"0/0\" when nothing matches,
+\"1/1\" when the only match was inserted directly -- which is what Lem leaves
+behind on those paths."
+  (when (and prompt *show-count* *count-field-enabled*)
+    (let* ((context lem/completion-mode::*completion-context*)
+           (popup (or popup-menu
+                       (and context (lem/completion-mode::context-popup-menu context))))
+           (count (cond (popup (or (completion-count-string popup) "-/-"))
+                        (context (let ((items (lem/completion-mode::context-last-items context)))
+                                   (if items
+                                       (format nil "1/~D" (length items))
+                                       "0/0")))
+                        (t nil))))
+      (set-prompt-count prompt (and count (pad-count count))))))
+
+(defun ensure-prompt-count-field ()
+  "Give the active prompt its (blank) count field, unless it has one.
+Called before a completion starts: see the note at the top of this file for why
+the field has to be there before the completion captures its points."
+  (let ((prompt (lem/prompt-window:current-prompt-window)))
+    (when (and prompt *show-count* *count-field-enabled*
+               (null (prompt-count-text prompt)))
+      (set-prompt-count prompt (pad-count "")))))
+
+(defun finish-prompt-count ()
+  "Drop the count field and the candidate rows, a completion having ended."
+  (let ((prompt (lem/prompt-window:current-prompt-window)))
+    (when prompt
+      (set-prompt-count prompt nil)
+      ;; The prompt window was grown to hold the list; it is one line again.
+      (ignore-errors
+        (lem-core::update-floating-prompt-window (lem:current-frame))))))
