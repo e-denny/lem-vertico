@@ -30,6 +30,26 @@ Takes effect the next time a completion popup is opened.")
     (and context
          (eq popup-menu (lem/completion-mode::context-popup-menu context)))))
 
+(defvar *completion-popup-p* nil
+  "True while a completion popup is being constructed.
+The frontend decides when the view is created -- from USE-MODELINE-P -- whether
+a window gets a modeline row at all, and Lem creates the view inside
+MAKE-INSTANCE, before DISPLAY-POPUP-MENU returns.  So the popup has to be
+tagged while it is built, not afterwards; setting the slot later leaves a view
+without a modeline surface and nothing is drawn.")
+
+(defmethod initialize-instance :around ((window lem/popup-window::popup-window)
+                                        &rest initargs &key &allow-other-keys)
+  "Give completion popups a modeline (i.e. the count) from the start."
+  (let ((modeline-p (and *completion-popup-p* *show-count*)))
+    (prog1 (apply #'call-next-method window
+                  (if modeline-p
+                      (list* :use-modeline-p t initargs)
+                      initargs))
+      (when modeline-p
+        (setf (lem-core::window-modeline-format window)
+              '(completion-count-modeline))))))
+
 (defun popup-menu-count (popup-menu)
   "Return POPUP-MENU's candidate number (1-based) and its number of rows.
 The number is the candidate's position in the list the producer returned, not
