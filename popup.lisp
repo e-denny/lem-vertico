@@ -18,9 +18,14 @@
   "Largest width, in characters, of the prompt and its completion popup.
 NIL leaves the prompt as wide as the frame.")
 
+;;; *COMPLETION-POPUP-MAX-ROWS* counts candidate rows; the count modeline (see
+;;; count.lisp) is an extra row on top of them, so the window is never so short
+;;; that the count would replace a candidate.
+
 (defun completion-popup-height (popup-menu)
   (let ((lines (lem:buffer-nlines (lem/popup-menu::popup-menu-buffer popup-menu))))
-    (max 1 (min *completion-popup-max-rows* lines))))
+    (+ (popup-modeline-rows popup-menu)
+       (max 1 (min *completion-popup-max-rows* lines)))))
 
 ;;; Prompt width.
 ;;;
@@ -86,6 +91,7 @@ NIL leaves the prompt as wide as the frame.")
                                               items &rest args)
   (let ((popup-menu (apply #'call-next-method implementation items args)))
     (when (null (getf args :max-display-items))
+      (enable-count-modeline popup-menu)
       (fit-completion-popup popup-menu))
     popup-menu))
 
@@ -93,4 +99,5 @@ NIL leaves the prompt as wide as the frame.")
                                              popup-menu items &rest args)
   (prog1 (apply #'call-next-method implementation popup-menu items args)
     (when (null (getf args :max-display-items))
+      (enable-count-modeline popup-menu)
       (fit-completion-popup popup-menu))))

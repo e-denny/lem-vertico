@@ -20,7 +20,9 @@
            (buffer (lem/popup-menu::popup-menu-buffer popup-menu))
            (focus (lem/popup-menu::focus-point popup-menu))
            (row (lem:window-cursor-y window))
-           (last-row (1- (lem:window-height window))))
+           ;; WINDOW-HEIGHT counts the count modeline; the last *text* row is
+           ;; one above it when the popup has one.
+           (last-row (1- (lem-core::window-height-without-modeline window))))
       (when (and focus
                  (< row last-row)
                  (= (lem:line-number-at-point focus)

@@ -5,7 +5,9 @@
   :depends-on ("lem/core" "alexandria")
   :serial t
   :components ((:file "package")
+               (:file "count")
                (:file "popup")
                (:file "align")
+               (:file "history")
                (:file "select")
                (:file "install")))

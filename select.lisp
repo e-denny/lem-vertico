@@ -9,15 +9,60 @@
 ;;; (src/ext/prompt-window.lisp:79).  Vertico submits on the first Return, so
 ;;; this binds Return to a command that inserts and then submits.
 ;;;
-;;; Two cases deliberately keep the plain insert-only behaviour: a directory
-;;; candidate, where Emacs also stays in the minibuffer and lists the
-;;; directory instead of exiting, and any buffer outside a prompt -- an
-;;; lsp-mode completion list, say -- where there is nothing to submit.  With no
-;;; candidate focused (an empty list, see the CONTINUE-COMPLETION patch below)
-;;; Return submits what was typed.
+;;; Three cases deliberately do not follow that path:
+;;;
+;;; - a directory candidate, where Emacs also stays in the minibuffer and lists
+;;;   the directory instead of exiting;
+;;; - a typed directory in a file prompt ("~/Documents/"), where submitting the
+;;;   input is the only sensible meaning -- vertico-preselect 'directory.  The
+;;;   focused candidate there is the first entry *inside* the directory, so
+;;;   inserting it would open that entry rather than the directory;
+;;; - any buffer outside a prompt -- an lsp-mode completion list, say -- where
+;;;   there is nothing to submit.
+;;;
+;;; With no candidate focused (an empty list, see the CONTINUE-COMPLETION patch
+;;; below) Return submits what was typed, and M-RETURN
+;;; (COMPLETION-SUBMIT-INPUT) submits the typed input whatever is focused.
 
 (defun prompt-window-active-p ()
   (and (lem/prompt-window:current-prompt-window) t))
+
+(defun prompt-input-string ()
+  "The text typed into the active prompt, without the prompt string."
+  (ignore-errors (lem/prompt-window::get-input-string)))
+
+(defun directory-name-p (input)
+  "True when INPUT names a directory, i.e. is non-empty and ends with a slash."
+  (and input
+       (plusp (length input))
+       (char= (char input (1- (length input))) #\/)))
+
+(defun directory-input-p ()
+  "True when the typed input names a directory.
+In a file prompt that is exactly the case where the candidates are the
+entries of an existing directory; when the directory does not exist the list
+is empty and Return already submits the input."
+  (directory-name-p (prompt-input-string)))
+
+(defun prompt-history-name (prompt)
+  "The name of PROMPT's history, e.g. \"PROMPT-FOR-FILE\", or NIL.
+Looked up by identity in the prompt window's history table, so the answer does
+not depend on how the history symbol was interned."
+  (let ((history (ignore-errors
+                  (lem/prompt-window::prompt-window-history prompt)))
+        (name nil))
+    (when history
+      (maphash (lambda (key value)
+                 (when (eq value history)
+                   (setf name (string key))))
+               lem/prompt-window::*history-table*)
+      name)))
+
+(defun file-prompt-p (prompt)
+  "True when PROMPT completes file names (C-x C-f, C-x C-w, ...)."
+  (member (prompt-history-name prompt)
+          '("PROMPT-FOR-FILE" "PROMPT-FOR-DIRECTORY")
+          :test #'string=))
 
 (define-command completion-select-and-execute () ()
   "Insert the focused candidate and submit the prompt."
@@ -31,11 +76,25 @@
     (cond ((null item)
            (when (prompt-window-active-p)
              (lem/prompt-window::prompt-execute)))
+          ((and (prompt-window-active-p)
+                (directory-input-p)
+                (file-prompt-p (lem/prompt-window:current-prompt-window)))
+           (lem/prompt-window::prompt-execute))
           (t
            (lem/completion-mode::completion-select)
            (unless directory-p
              (when (prompt-window-active-p)
                (lem/prompt-window::prompt-execute)))))))
+
+(define-command completion-submit-input () ()
+  "Submit the prompt input exactly as typed, ignoring the focused candidate.
+The vertico-exit-input case: needed to create a new file or buffer whose name
+is a prefix of an existing candidate, or to search for the empty string."
+  (cond ((prompt-window-active-p)
+         (lem/prompt-window::prompt-execute))
+        (lem/completion-mode::*completion-context*
+         (lem/completion-mode::completion-select))
+        (t nil)))
 
 
 ;;; Keep the completion context alive when nothing matches.
