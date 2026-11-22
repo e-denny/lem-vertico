@@ -1,0 +1,10 @@
+# Lisp build artifacts
+*.fasl
+*.fas
+*.lx64fsl
+*.dx64fsl
+*.ufsl
+
+# Editor and OS noise
+*~
+.DS_Store
