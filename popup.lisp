@@ -160,12 +160,85 @@ line, so the prompt window is that many rows taller than its buffer."
         (layout-prompt-popup popup-menu)
         (fit-detached-popup popup-menu))))
 
+;;; Column lists.
+;;;
+;;; The buffer list and the other MULTI-COLUMN-LIST menus open with
+;;; :MAX-DISPLAY-ITEMS, which is how FIT-COMPLETION-POPUP tells a list from a
+;;; completion and leaves it alone.  Left alone they keep Lem's own placement
+;;; for them, (:GRAVITY :CENTER), and a four-row buffer list lands in the
+;;; middle of the frame, over the text.  Lists get the prompt box's placement
+;;; instead: bottom of the frame, prompt box width, so a list opens where a
+;;; prompt opens.  There is no prompt around a list, so the border stays.
+
+(defclass list-popup-gravity (lem/popup-window::gravity)
+  ()
+  (:documentation "Bottom of the frame, as wide as the prompt box."))
+
+(defvar *list-popup-gravity* (make-instance 'list-popup-gravity))
+
+(defun prompt-box-width ()
+  "The width the prompt box takes, from the settings INSTALL applies."
+  (let* ((display-width (lem:display-width))
+         (max-width (max 1 (if *prompt-max-width*
+                               (min *prompt-max-width* (- display-width 2))
+                               (- display-width 2)))))
+    (if lem/prompt-window::*fill-width*
+        max-width
+        (max 1 (round (* max-width 2/3))))))
+
+(defmethod lem/popup-window::compute-popup-window-rectangle
+    ((gravity list-popup-gravity)
+     &key source-window width height (border-size 0) &allow-other-keys)
+  (declare (ignore source-window))
+  (let* ((display-width (lem:display-width))
+         (display-height (lem:display-height))
+         (height (min (max 1 height) display-height))
+         ;; As wide as the prompt box, and wider when the columns need it: the
+         ;; column widths come from the items, and clipping them would cut text.
+         (width (min (max (prompt-box-width) (max 1 width))
+                     (- display-width (* 2 border-size) 2)))
+         (x (max 0 (floor (- display-width width) 2)))
+         ;; MAKE-POPUP-WINDOW puts the window's own box inside the rectangle it
+         ;; is given -- the window starts BORDER-SIZE in from both edges -- so
+         ;; the rectangle has to leave the border room below, or the last row of
+         ;; the box hangs off the bottom of the display.
+         (y (max 0 (- display-height height (* 2 border-size)))))
+    (list (- x border-size) y width height)))
+
+(defun style-with-list-gravity (style)
+  "STYLE with its gravity replaced by the column list's placement.
+STYLE is a STYLE struct or the plist of MAKE-STYLE arguments that callers pass
+-- MULTI-COLUMN-LIST:display passes '(:gravity :center) -- and everything else
+in it (the border, the background) is kept."
+  (if (typep style 'lem/popup-window::style)
+      (lem/popup-window::merge-style style :gravity *list-popup-gravity*)
+      (cons :gravity
+            (cons *list-popup-gravity*
+                  (loop :for rest :on style :by #'cddr
+                        :for key := (first rest)
+                        :for value := (second rest)
+                        :unless (eq key :gravity)
+                          :append (list key value))))))
+
+(defun list-popup-args (args)
+  "ARGS for DISPLAY-POPUP-MENU with the column list's placement in its style."
+  (loop :for rest :on args :by #'cddr
+        :for key := (first rest)
+        :for value := (second rest)
+        :nconc (if (eq key :style)
+                   (list :style (style-with-list-gravity value))
+                   (list key value))))
+
 (defmethod lem-if:display-popup-menu :around ((implementation lem:implementation)
                                               items &rest args)
-  (let ((popup-menu (apply #'call-next-method implementation items args)))
-    ;; Only completions are fitted; a context menu or a list opened with
-    ;; :max-display-items keeps the size its caller asked for.
-    (when (null (getf args :max-display-items))
+  (let* ((completion-p (null (getf args :max-display-items)))
+         (popup-menu (if completion-p
+                         (apply #'call-next-method implementation items args)
+                         (apply #'call-next-method implementation items
+                                (list-popup-args args)))))
+    ;; Only completions are fitted; a column list keeps the rows its caller
+    ;; asked for, with the placement LIST-POPUP-ARGS gives it.
+    (when completion-p
       (fit-completion-popup popup-menu))
     popup-menu))
 

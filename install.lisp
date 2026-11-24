@@ -62,6 +62,13 @@ another copy on top of it.")
 
   (install-completion-end)
 
+  ;; C-x C-b opens the completion list instead of Lem's column list: the same
+  ;; box as C-x b, with the count and the first candidate focused.  A column
+  ;; list has no prompt line to put a count on, and which buffer is selected is
+  ;; easier to see in the completion list.  The column list stays available as
+  ;; M-x LIST-BUFFERS; see LIST-POPUP-GRAVITY in popup.lisp for its placement.
+  (define-key *global-keymap* "C-x C-b" 'select-buffer)
+
   (define-key lem/completion-mode::*completion-mode-keymap*
     "Return" 'completion-select-and-execute)
 
