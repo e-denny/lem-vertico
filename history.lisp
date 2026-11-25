@@ -1,6 +1,6 @@
 (in-package :lem-vertico)
 
-;;; History-first ordering, and a persisted history for M-x.
+;;; History-first ordering, a first-row default, and a persisted history for M-x.
 ;;;
 ;;; Vertico's default sort function (vertico-sort-history-length-alpha, from
 ;;; vertico-sort.el) lists what was used last first; that is what makes M-x
@@ -25,7 +25,8 @@
 ;;; and written on every ADD-HISTORY.
 
 (defvar *history-ordering-p* t
-  "When non-NIL, candidates found in the prompt's history are listed first.")
+  "When non-NIL, candidates found in the prompt's history are listed after the
+default (if the prompt has one) and before the rest, most recent first.")
 
 (defvar *persisted-history-names* '("MH-EXECUTE-COMMAND")
   "Prompt histories, by name, that are saved between sessions.
@@ -62,27 +63,69 @@ history symbol: M-x's is read as LEM-CORE::MH-EXECUTE-COMMAND.")
 
 (defun history-order-items (items
                             &optional (prompt (lem/prompt-window:current-prompt-window)))
-  "ITEMS with the ones named in PROMPT's history first, most recent first.
+  "ITEMS with the prompt's default first, then its history, most recent first.
 The rest keep the producer's order."
-  (if (or (null *history-ordering-p*) (null prompt))
-      items
-      (let ((positions (history-position-table prompt)))
-        (if (zerop (hash-table-count positions))
-            items
-            (let ((ranked '())
-                  (rest '()))
-              (dolist (item items)
-                (multiple-value-bind (position found)
-                    (gethash (lem/completion-mode:completion-item-label item)
-                             positions)
-                  (if found
-                      (push (cons position item) ranked)
-                      (push item rest))))
-              (if (null ranked)
-                  items
-                  (append (mapcar #'cdr
-                                  (stable-sort (nreverse ranked) #'< :key #'car))
-                          (nreverse rest))))))))
+  (prefer-default-candidate
+   (if (or (null *history-ordering-p*) (null prompt))
+       items
+       (let ((positions (history-position-table prompt)))
+         (if (zerop (hash-table-count positions))
+             items
+             (let ((ranked '())
+                   (rest '()))
+               (dolist (item items)
+                 (multiple-value-bind (position found)
+                     (gethash (lem/completion-mode:completion-item-label item)
+                              positions)
+                   (if found
+                       (push (cons position item) ranked)
+                       (push item rest))))
+               (if (null ranked)
+                   items
+                   (append (mapcar #'cdr
+                                   (stable-sort (nreverse ranked) #'< :key #'car))
+                           (nreverse rest)))))))))
+
+;;; The prompt's default comes first.
+;;;
+;;; C-x b passes PROMPT-FOR-BUFFER a default: OTHER-BUFFER, the most recent
+;;; buffer that is not on screen.  That is the buffer Return should choose, and
+;;; the one the prompt names in parentheses.  History-first ordering would
+;;; instead put the buffer just used -- the one still in the history -- on top,
+;;; so C-x b twice in a row highlighted the buffer it had just selected while
+;;; the prompt offered a different default.  Moving the default in front of the
+;;; history makes the first candidate and the focused row agree with the prompt.
+;;;
+;;; PROMPT-FOR-BUFFER is patched only to record its :default argument in
+;;; *DEFAULT-CANDIDATE* for the duration of the prompt.  The binding is
+;;; dynamic, and PROMPT-FOR-BUFFER does not return until the prompt has ended, so
+;;; the value is there whenever the prompt's completion calls LIMITATION-ITEMS.
+;;; Buffer prompts are the only ones that pass a default, so M-x, file prompts
+;;; and the rest are unaffected.
+
+(defvar *default-candidate* nil
+  "Label that the running prompt offers as its default, or NIL.")
+
+(defvar *original-prompt-for-buffer* nil
+  "LEM:PROMPT-FOR-BUFFER before this file patched it.")
+
+(defun default-candidate-name (default)
+  "DEFAULT as the label a candidate would carry, or NIL."
+  (cond ((null default) nil)
+        ((stringp default) default)
+        (t (or (ignore-errors (lem:buffer-name default))
+               (princ-to-string default)))))
+
+(defun prefer-default-candidate (items)
+  "ITEMS with *DEFAULT-CANDIDATE*'s item first, the rest in order."
+  (if *default-candidate*
+      (let ((item (find *default-candidate* items
+                        :test #'string=
+                        :key #'lem/completion-mode:completion-item-label)))
+        (if item
+            (cons item (remove item items :test #'eq))
+            items))
+      items))
 
 (defun save-prompt-history (history)
   "Write HISTORY to disk; SAVE-FILE is already a no-op without a pathname."
@@ -97,6 +140,21 @@ The rest keep the producer's order."
 
 (defvar *original-add-history* nil
   "LEM/COMMON/HISTORY:ADD-HISTORY before this file patched it.")
+
+(defun install-default-candidate ()
+  "Record the default of a running PROMPT-FOR-BUFFER, to list it first."
+  #+sbcl
+  (sb-ext:without-package-locks
+    (progn
+      (setf *original-prompt-for-buffer*
+            (or *original-prompt-for-buffer*
+                (symbol-function 'lem:prompt-for-buffer)))
+      (setf (symbol-function 'lem:prompt-for-buffer)
+            (lambda (prompt &rest args)
+              (let ((*default-candidate*
+                      (default-candidate-name (getf args :default))))
+                (apply *original-prompt-for-buffer* prompt args))))))
+  (values))
 
 (defun install-history-ordering ()
   "List candidates that appear in the prompt's history first."

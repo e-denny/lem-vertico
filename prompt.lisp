@@ -72,3 +72,51 @@
               (prog1 (funcall *original-completion-end*)
                 (finish-prompt-count))))))
   (values))
+
+
+;;; No common prefix inserted when the list opens.
+;;;
+;;; START-COMPLETION calls NARROWING-DOWN on the items it was given, which
+;;; inserts their common prefix into the prompt (src/ext/completion-mode.lisp:
+;;; 262, 321).  That is meant for a completion the user asked for with TAB, but
+;;; *automatic-tab-completion* runs OPEN-PROMPT-COMPLETION as soon as the prompt
+;;; appears, so a buffer prompt whose candidates are all star buffers opens with
+;;; a "*" already typed -- and the added character then filters the list to the
+;;; star buffers, hiding the very default the prompt offered.  Emacs vertico
+;;; never inserts a common prefix; TAB (COMPLETION-INSERT-CANDIDATE) inserts a
+;;; whole candidate instead.
+;;;
+;;; Only the call START-COMPLETION makes is inhibited, not NARROWING-DOWN at
+;;; large: COMPLETION-NARROWING-DOWN-OR-NEXT-LINE still uses it when something
+;;; asks for that behaviour, and the dynamic variable is unbound again by the
+;;; time START-COMPLETION returns.
+
+(defvar *inhibit-initial-narrowing* nil
+  "True while START-COMPLETION runs: do not insert the common prefix.")
+
+(defvar *original-start-completion* nil
+  "LEM/COMPLETION-MODE::START-COMPLETION before this file patched it.")
+
+(defvar *original-narrowing-down* nil
+  "LEM/COMPLETION-MODE::NARROWING-DOWN before this file patched it.")
+
+(defun install-no-initial-narrowing ()
+  "Open a completion with its candidates and without inserting a common prefix."
+  #+sbcl
+  (sb-ext:without-package-locks
+    (progn
+      (setf *original-narrowing-down*
+            (or *original-narrowing-down*
+                (symbol-function 'lem/completion-mode::narrowing-down)))
+      (setf (symbol-function 'lem/completion-mode::narrowing-down)
+            (lambda (context last-items)
+              (unless *inhibit-initial-narrowing*
+                (funcall *original-narrowing-down* context last-items))))
+      (setf *original-start-completion*
+            (or *original-start-completion*
+                (symbol-function 'lem/completion-mode::start-completion)))
+      (setf (symbol-function 'lem/completion-mode::start-completion)
+            (lambda (context items style)
+              (let ((*inhibit-initial-narrowing* t))
+                (funcall *original-start-completion* context items style))))))
+  (values))

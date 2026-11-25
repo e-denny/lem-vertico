@@ -61,6 +61,7 @@ another copy on top of it.")
                 (refresh-prompt-count))))))
 
   (install-completion-end)
+  (install-no-initial-narrowing)
 
   ;; C-x C-b opens the completion list instead of Lem's column list: the same
   ;; box as C-x b, with the count and the first candidate focused.  A column
@@ -100,7 +101,9 @@ another copy on top of it.")
                            (lem/completion-mode::call-focus-action))
                          (hide-completion-popup context))))))))))
 
-  ;; History-first candidate order, and a persisted M-x history.
+  ;; History-first candidate order, the prompt's default first, and a persisted
+  ;; M-x history.
+  (install-default-candidate)
   (install-history-ordering)
   (install-history-persistence)
 

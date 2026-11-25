@@ -21,7 +21,12 @@
 ;;; order, not reversed.  Down moves to the next candidate, as in Emacs.
 
 (defvar *completion-popup-max-rows* 10
-  "Upper bound on the number of candidate rows shown by the completion popup.")
+  "Number of candidate rows the prompt's completion box always has.
+The box keeps this height while it is open.  Only the display height lowers
+it (see PROMPT-POPUP-ROWS), and a completion that is not a prompt's still
+shrinks to its own candidates (see COMPLETION-POPUP-ROWS).  This is what
+Emacs vertico does with `vertico-resize' nil: the minibuffer does not grow
+and shrink as the candidate list is filtered.")
 
 (defvar *prompt-max-width* 120
   "Largest width, in characters, of the prompt box and its candidates.
@@ -100,8 +105,18 @@ line, so the prompt window is that many rows taller than its buffer."
                                    lem/prompt-window::+min-height+
                                    (- (lem:display-height) 2)))))))
 
+(defun prompt-popup-rows ()
+  "Rows the prompt's candidate box always takes.
+The box does not shrink when filtering leaves fewer candidates: blank rows
+below the list are what keeps the prompt and the text around it still.  The
+display is the only thing that can make it shorter."
+  (max 1 (min *completion-popup-max-rows*
+              (- (lem:display-height) 4))))
+
 (defun completion-popup-rows (popup-menu)
-  "Rows of candidates POPUP-MENU shows: its lines, capped at *COMPLETION-POPUP-MAX-ROWS*."
+  "Rows of candidates POPUP-MENU shows: its lines, capped at *COMPLETION-POPUP-MAX-ROWS*.
+Used for completions that are not the prompt's box, which stay sized to
+their candidates."
   (max 1 (min *completion-popup-max-rows*
               (lem:buffer-nlines (lem/popup-menu::popup-menu-buffer popup-menu))
               (- (lem:display-height) 4))))
@@ -118,7 +133,7 @@ line, so the prompt window is that many rows taller than its buffer."
   "Put POPUP-MENU's candidates inside the prompt's box, below the prompt line."
   (let ((window (lem/popup-menu::popup-menu-window popup-menu))
         (prompt (lem/prompt-window:current-prompt-window))
-        (rows (completion-popup-rows popup-menu)))
+        (rows (prompt-popup-rows)))
     (when (and window prompt)
       ;; The prompt grows to hold the candidates and PROMPT-RECTANGLE reads the
       ;; candidate window's height, so size that first.
